@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
@@ -13,6 +14,7 @@ import java.util.List;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.OutputKeys;
 import javax.xml.transform.Transformer;
 import javax.xml.transform.TransformerConfigurationException;
 import javax.xml.transform.TransformerException;
@@ -24,11 +26,15 @@ import org.apache.commons.codec.binary.Base64;
 import org.apache.poi.hssf.usermodel.HSSFCell;
 import org.apache.poi.ss.format.CellFormatType;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.PictureData;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFCell;
+import org.apache.poi.xssf.usermodel.XSSFClientAnchor;
+import org.apache.poi.xssf.usermodel.XSSFPicture;
 import org.apache.poi.xssf.usermodel.XSSFRow;
+import org.apache.poi.xssf.usermodel.XSSFShape;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.w3c.dom.Document;
@@ -44,7 +50,10 @@ public class Main {
 	private static List<Person> people = new ArrayList<>();
 	private static List<Podr> departments = new ArrayList<>();
 	private static List<Dolgnost> positions = new ArrayList<>();
-	private static List<Office> offices = new ArrayList<>();
+	private static List<Office> offices = Arrays.asList(
+			new Office(OFFICE_PREF + 0, "677001, г. Якутск, пер. Энергетиков, д. 2, Исполнительная дирекция", 1000), 
+			new Office(OFFICE_PREF + 1, "677004, г. Якутск, ул. Беринга, д. 42, Производственный центр", 100)
+			);
 	
 	public static void main(String[] args) {
 		try {
@@ -60,8 +69,8 @@ public class Main {
 	}
 	
 	public static void readFromExcel(String fileName) throws IOException {
-		Workbook book = new XSSFWorkbook(new FileInputStream(fileName));
-		Sheet sheet = book.getSheet("Лист1");
+		XSSFWorkbook book = new XSSFWorkbook(new FileInputStream(fileName));
+		XSSFSheet sheet = book.getSheet("Лист1");
 		Iterator<Row> iterator = sheet.iterator();
 		
 		iterator.next();
@@ -71,8 +80,32 @@ public class Main {
 			processRow(currentRow, rowNumber);
 			rowNumber++;
 		}
+		processImages(sheet);
 		     
         book.close();
+	}
+	
+	public static void processImages(XSSFSheet sheet) {
+		List<XSSFShape> shapes = sheet.getDrawingPatriarch().getShapes();
+		for (XSSFShape shape : shapes) {
+		    if (shape instanceof XSSFPicture) {
+		        XSSFPicture picture = (XSSFPicture) shape;
+		        XSSFClientAnchor anchor = (XSSFClientAnchor) picture.getAnchor();
+		        // Ensure to use only relevant pictures
+		        if (anchor.getCol1() == 0) {
+		            // Use the row from the anchor
+		            XSSFRow pictureRow = sheet.getRow(anchor.getRow1());
+		            if (pictureRow != null) {
+		            	int rowNum = pictureRow.getRowNum();
+		            	Person person = people.get(rowNum - 1);
+		            	byte[] picData = picture.getPictureData().getData();
+		            	String encodedImage = Base64.encodeBase64String(picData);
+		            	person.setPhoto(encodedImage);
+		            	people.set(rowNum - 1, person);
+		            }
+		        }
+		    }
+		}
 	}
 	
 	public static void writeIntoXml() throws ParserConfigurationException, TransformerException {
@@ -110,7 +143,7 @@ public class Main {
 			Element podrElement = doc.createElement("Podr");
 			
 			Element podrIdElement = doc.createElement("ID");
-			podrIdElement.setNodeValue(podr.id);
+			podrIdElement.appendChild(doc.createTextNode(podr.id));
 			
 			Element parentPodrIdElement = doc.createElement("ParentPodr_ID");
 			parentPodrIdElement.appendChild(doc.createTextNode(podr.parentPodrId));
@@ -148,11 +181,35 @@ public class Main {
 			Element dolgnostRankElement = doc.createElement("Rank");
 			dolgnostRankElement.appendChild(doc.createTextNode(String.valueOf(dolgnost.rank)));
 			
+			
+			dolgnostElement.appendChild(dolgnostIdElement);
+			dolgnostElement.appendChild(dolgnostNameElement);
+			dolgnostElement.appendChild(dolgnostRankElement);
+			
 			positionsElement.appendChild(dolgnostElement);
 		}
 		
 		Element officesElement = doc.createElement("Offices");
 		organizationElement.appendChild(officesElement);
+		
+		for (Office office : offices) {
+			Element addressElement = doc.createElement("Address");
+			
+			Element addressIdElement = doc.createElement("ID");
+			addressIdElement.appendChild(doc.createTextNode(office.id));
+			
+			Element addressNameElement = doc.createElement("Name");
+			addressNameElement.appendChild(doc.createTextNode(office.name));
+			
+			Element rankElement = doc.createElement("Rank");
+			rankElement.appendChild(doc.createTextNode(String.valueOf(office.rank)));
+			
+			addressElement.appendChild(addressIdElement);
+			addressElement.appendChild(addressNameElement);
+			addressElement.appendChild(rankElement);
+			
+			officesElement.appendChild(addressElement);
+		}
 		
 		Element personalsElement = doc.createElement("Personals");
 		organizationElement.appendChild(personalsElement);
@@ -162,19 +219,86 @@ public class Main {
 			personalsElement.appendChild(persElement);
 			
 			Element persIdElement = doc.createElement("ID");
-			persIdElement.appendChild(doc.createTextNode(person.id));
+			persIdElement.appendChild(doc.createTextNode(person.getId()));
 			persElement.appendChild(persIdElement);
 			
+			Element podrIdElement = doc.createElement("Podr_ID");
+			podrIdElement.appendChild(doc.createTextNode(person.getPodrId()));
+			persElement.appendChild(podrIdElement);
+			
+			Element dolgnostIdElement = doc.createElement("Dolgnost_ID");
+			dolgnostIdElement.appendChild(doc.createTextNode(person.getDolgnostId()));
+			persElement.appendChild(dolgnostIdElement);
+			
+			Element addressIdElement = doc.createElement("Address_ID");
+			addressIdElement.appendChild(doc.createTextNode(person.getAddressId()));
+			persElement.appendChild(addressIdElement);
+			
+			Element bossPersIdElement = doc.createElement("BossPers_ID");
+			bossPersIdElement.appendChild(doc.createTextNode(person.getBossPersId()));
+			persElement.appendChild(bossPersIdElement);
+			
+			Element roomNumberElement = doc.createElement("RoomNumber");
+			roomNumberElement.appendChild(doc.createTextNode(person.getRoomNumber()));
+			persElement.appendChild(roomNumberElement);
+			
 			Element persFioElement = doc.createElement("FIO");
-			persFioElement.appendChild(doc.createTextNode(person.fio));
+			persFioElement.appendChild(doc.createTextNode(person.getFio()));
 			persElement.appendChild(persFioElement);
+			
+			Element telVnutrElement = doc.createElement("TelVnutr");
+			telVnutrElement.appendChild(doc.createTextNode(person.getTelVnutr()));
+			persElement.appendChild(telVnutrElement);
+			
+			Element telGorElement = doc.createElement("TelGor");
+			telGorElement.appendChild(doc.createTextNode(person.getTelGor()));
+			persElement.appendChild(telGorElement);
+			
+			Element telSotElement = doc.createElement("TelSot");
+			telSotElement.appendChild(doc.createTextNode(person.getTelSot()));
+			persElement.appendChild(telSotElement);
+			
+			Element emailElement = doc.createElement("Email");
+			emailElement.appendChild(doc.createTextNode(person.getEmail()));
+			persElement.appendChild(emailElement);
+			
+			Element birthDateElement = doc.createElement("BirthDate");
+			String birthDateString = person.getBirthDate() == null ? "" : person.getBirthDate().toString();
+			birthDateElement.appendChild(doc.createTextNode(birthDateString));
+			persElement.appendChild(birthDateElement);
+			
+			Element vacationStartDateElement = doc.createElement("VocationStartDate");
+			String vacationStartDateString = person.getVacationStartDate() == null ? "" : person.getVacationStartDate().toString();
+			vacationStartDateElement.appendChild(doc.createTextNode(vacationStartDateString));
+			persElement.appendChild(vacationStartDateElement);
+			
+			Element vacationEndDateElement = doc.createElement("VocationEndDate");
+			String vacationEndDateString = person.getVacationEndDate() == null ? "" : person.getVacationEndDate().toString();
+			vacationEndDateElement.appendChild(doc.createTextNode(vacationEndDateString));
+			persElement.appendChild(vacationEndDateElement);
+			
+			Element missionStartDateElement = doc.createElement("MissionStartDate");
+			String missionStartDateString = person.getMissionStartdDate() == null ? "" : person.getMissionStartdDate().toString();
+			missionStartDateElement.appendChild(doc.createTextNode(missionStartDateString));
+			persElement.appendChild(missionStartDateElement);
+			
+			Element missionEndDateElement = doc.createElement("MissionEndDate");
+			String missionEndDateString = person.getMissionEndDate() == null ? "" : person.getMissionEndDate().toString();
+			missionEndDateElement.appendChild(doc.createTextNode(missionEndDateString));
+			persElement.appendChild(missionEndDateElement);
+			
+			Element photoElement = doc.createElement("Photo");
+			String encodedImage = person.getEncodedImage() == null ? "" : person.getEncodedImage();
+			photoElement.appendChild(doc.createTextNode(encodedImage));
+			persElement.appendChild(photoElement);
 		}
 		
 		TransformerFactory transformerFactory = TransformerFactory.newInstance();
 		Transformer transformer = transformerFactory.newTransformer();
+		transformer.setOutputProperty(OutputKeys.INDENT, "yes");
 		DOMSource source = new DOMSource(doc);
 		StreamResult result = new StreamResult(new File("C:\\file.xml"));
-
+		
 		// Output to console for testing
 		// StreamResult result = new StreamResult(System.out);
 
@@ -203,7 +327,7 @@ public class Main {
 		String roomNumber = getCellValue(roomCell);
 		String fio = fioCell.getStringCellValue();
 		String telVnutr = getCellValue(ipCell);
-		String telGor = "+7411249" + getCellValue(kvantCell);
+		String telGor = getCellValue(kvantCell).equals("")?  "" : "+7411249" + getCellValue(kvantCell);
 		//					: "+74112" + (gtsCell.getCellType() == XSSFCell.CELL_TYPE_NUMERIC ? gtsCell.getNumericCellValue() : gtsCell.getStringCellValue());
 		String telSot = getCellValue(cellPhonetCell);
 		String email = emailCell.getStringCellValue();
@@ -212,34 +336,36 @@ public class Main {
 		Date vacationEndDate = null;
 		Date missionStartdDate = null;
 		Date missionEndDate = null;
-		Base64 photo = null;
+		String encodedString = null;
 		
 		Person person = new Person(personId, podrId, dolgnostId, addressId, bossPersId, 
 				roomNumber, fio, telVnutr, telGor, telSot, email,
-				birthDate, vacationStartDate, vacationEndDate, missionStartdDate, missionEndDate, photo);
+				birthDate, vacationStartDate, vacationEndDate, missionStartdDate, missionEndDate, encodedString);
 		
-		String pPodrId = PODR_PREF + departments.size();
+		String pPodrId = null;//PODR_PREF + departments.size();
 		String pPodrName = getCellValue(deptCell);
 		int pRank = 100;
 		String pParentPodrId = "";
 		String pBossPersId = "";
 		Podr podr = new Podr(pPodrId, pPodrName, pRank, pParentPodrId, pBossPersId);
 		if (!departments.contains(podr)) {
+			podr.id = PODR_PREF + departments.size();
 			departments.add(podr);
 			person.setPodrId(podr.id);
 		} else {
 			person.setPodrId(departments.get(departments.indexOf(podr)).id);
 		}
 		
-		String dDolgnostId = DOLGNOST_PREF + positions.size();
+		String dDolgnostId = null;//DOLGNOST_PREF + positions.size();
 		String dDognostName = positionCell.getStringCellValue();
 		int dRank = 200;
 		Dolgnost dolgnost = new Dolgnost(dDolgnostId, dDognostName, dRank);
 		if (!positions.contains(dolgnost)) {
+			dolgnost.id = DOLGNOST_PREF + positions.size();
 			positions.add(dolgnost);
-			person.setPodrId(dolgnost.id);
+			person.setDolgnostId(dolgnost.id);
 		} else {
-			person.setPodrId(positions.get(positions.indexOf(dolgnost)).id);
+			person.setDolgnostId(positions.get(positions.indexOf(dolgnost)).id);
 		}
 		
 		people.add(person);
@@ -250,188 +376,6 @@ public class Main {
 			return "";
 		}
 		return cell.getCellType() == XSSFCell.CELL_TYPE_NUMERIC ? String.valueOf(cell.getNumericCellValue()) : cell.getStringCellValue();
-	}
-	
-	private static class Person {
-		private String id;
-		private String podrId;
-		private String dolgnostId;
-		private String addressId;
-		private String bossPersId;
-		private String roomNumber;
-		private String fio;
-		private String telVnutr;
-		private String telGor;
-		private String telSot;
-		private String email;
-		private Date birthDate;
-		private Date vacationStartDate;
-		private Date vacationEndDate;
-		private Date missionStartdDate;
-		private Date missionEndDate;
-		private Base64 photo;
-		
-		public Person(String id, String podrId, String dolgnostId, String addressId, String bossPersId,
-				String roomNumber, String fio, String telVnutr, String telGor, String telSot, String email,
-				Date birthDate, Date vacationStartDate, Date vacationEndDate, Date missionStartdDate,
-				Date missionEndDate, Base64 photo) {
-			super();
-			this.id = id;
-			this.podrId = podrId;
-			this.dolgnostId = dolgnostId;
-			this.addressId = addressId;
-			this.bossPersId = bossPersId;
-			this.roomNumber = roomNumber;
-			this.fio = fio;
-			this.telVnutr = telVnutr;
-			this.telGor = telGor;
-			this.telSot = telSot;
-			this.email = email;
-			this.birthDate = birthDate;
-			this.vacationStartDate = vacationStartDate;
-			this.vacationEndDate = vacationEndDate;
-			this.missionStartdDate = missionStartdDate;
-			this.missionEndDate = missionEndDate;
-			this.photo = photo;
-		}
-
-		public String getId() {
-			return id;
-		}
-
-		public void setId(String id) {
-			this.id = id;
-		}
-
-		public String getPodrId() {
-			return podrId;
-		}
-
-		public void setPodrId(String podrId) {
-			this.podrId = podrId;
-		}
-
-		public String getDolgnostId() {
-			return dolgnostId;
-		}
-
-		public void setDolgnostId(String dolgnostId) {
-			this.dolgnostId = dolgnostId;
-		}
-
-		public String getAddressId() {
-			return addressId;
-		}
-
-		public void setAddressId(String addressId) {
-			this.addressId = addressId;
-		}
-
-		public String getBossPersId() {
-			return bossPersId;
-		}
-
-		public void setBossPersId(String bossPersId) {
-			this.bossPersId = bossPersId;
-		}
-
-		public String getRoomNumber() {
-			return roomNumber;
-		}
-
-		public void setRoomNumber(String roomNumber) {
-			this.roomNumber = roomNumber;
-		}
-
-		public String getFio() {
-			return fio;
-		}
-
-		public void setFio(String fio) {
-			this.fio = fio;
-		}
-
-		public String getTelVnutr() {
-			return telVnutr;
-		}
-
-		public void setTelVnutr(String telVnutr) {
-			this.telVnutr = telVnutr;
-		}
-
-		public String getTelGor() {
-			return telGor;
-		}
-
-		public void setTelGor(String telGor) {
-			this.telGor = telGor;
-		}
-
-		public String getTelSot() {
-			return telSot;
-		}
-
-		public void setTelSot(String telSot) {
-			this.telSot = telSot;
-		}
-
-		public String getEmail() {
-			return email;
-		}
-
-		public void setEmail(String email) {
-			this.email = email;
-		}
-
-		public Date getBirthDate() {
-			return birthDate;
-		}
-
-		public void setBirthDate(Date birthDate) {
-			this.birthDate = birthDate;
-		}
-
-		public Date getVacationStartDate() {
-			return vacationStartDate;
-		}
-
-		public void setVacationStartDate(Date vacationStartDate) {
-			vacationStartDate = vacationStartDate;
-		}
-
-		public Date getVacationEndDate() {
-			return vacationEndDate;
-		}
-
-		public void setVacationEndDate(Date vacationEndDate) {
-			vacationEndDate = vacationEndDate;
-		}
-
-		public Date getMissionStartdDate() {
-			return missionStartdDate;
-		}
-
-		public void setMissionStartdDate(Date missionStartdDate) {
-			missionStartdDate = missionStartdDate;
-		}
-
-		public Date getMissionEndDate() {
-			return missionEndDate;
-		}
-
-		public void setMissionEndDate(Date missionEndDate) {
-			missionEndDate = missionEndDate;
-		}
-
-		public Base64 getPhoto() {
-			return photo;
-		}
-
-		public void setPhoto(Base64 photo) {
-			this.photo = photo;
-		}
-		
-		
 	}
 	
 	private static class Podr extends BaseEntity {
@@ -491,52 +435,5 @@ public class Main {
 			super(id, name, rank);
 		}
 		
-	}
-	
-	protected abstract static class BaseEntity {
-		protected String id;
-		protected String name;
-		protected int rank;
-		
-		public BaseEntity(String id, String name, int rank) {
-			super();
-			this.id = id;
-			this.name = name;
-			this.rank = rank;
-		}
-
-		@Override
-		public int hashCode() {
-			final int prime = 31;
-			int result = 1;
-			result = prime * result + ((id == null) ? 0 : id.hashCode());
-			result = prime * result + ((name == null) ? 0 : name.hashCode());
-			result = prime * result + rank;
-			return result;
-		}
-
-		@Override
-		public boolean equals(Object obj) {
-			if (this == obj)
-				return true;
-			if (obj == null)
-				return false;
-			if (getClass() != obj.getClass())
-				return false;
-			BaseEntity other = (BaseEntity) obj;
-			if (id == null) {
-				if (other.id != null)
-					return false;
-			} else if (!id.equals(other.id))
-				return false;
-			if (name == null) {
-				if (other.name != null)
-					return false;
-			} else if (!name.equals(other.name))
-				return false;
-			if (rank != other.rank)
-				return false;
-			return true;
-		}
 	}
 }
